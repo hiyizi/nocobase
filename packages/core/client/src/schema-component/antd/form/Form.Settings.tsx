@@ -9,7 +9,8 @@
 
 import { SchemaSettings } from '../../../application/schema-settings';
 import { useCollection_deprecated } from '../../../collection-manager';
-import { SchemaSettingsTemplate } from '../../../schema-settings/SchemaSettings';
+import { SchemaSettingsTemplate } from '../../../schema-settings/SchemaSettingsTemplate';
+import { useBlockTemplateContext } from '../../../schema-templates/BlockTemplateProvider';
 
 /**
  * @deprecated
@@ -22,8 +23,9 @@ export const formV1Settings = new SchemaSettings({
       Component: SchemaSettingsTemplate,
       useComponentProps() {
         const { name } = useCollection_deprecated();
+        const { componentNamePrefix } = useBlockTemplateContext();
         return {
-          componentName: 'Form',
+          componentName: `${componentNamePrefix}Form`,
           collectionName: name,
         };
       },

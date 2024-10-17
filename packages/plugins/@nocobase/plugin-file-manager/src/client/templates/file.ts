@@ -100,7 +100,7 @@ export class FileCollectionTemplate extends CollectionTemplate {
       },
       // 文件的可访问地址
       {
-        interface: 'input',
+        interface: 'url',
         type: 'string',
         name: 'url',
         deletable: false,
@@ -157,12 +157,24 @@ export class FileCollectionTemplate extends CollectionTemplate {
     },
     ...getConfigurableProperties('category', 'description'),
     storage: {
-      title: `{{t("File storage", { ns: "${NAMESPACE}" })}}`,
-      type: 'hasOne',
+      type: 'string',
       name: 'storage',
+      title: `{{t("File storage", { ns: "${NAMESPACE}" })}}`,
       'x-decorator': 'FormItem',
-      'x-component': 'Select',
-      'x-reactions': ['{{useAsyncDataSource(loadStorages)}}'],
+      'x-component': 'RemoteSelect',
+      'x-component-props': {
+        service: {
+          resource: 'storages',
+          params: {
+            // pageSize: -1
+          },
+        },
+        manual: false,
+        fieldNames: {
+          label: 'title',
+          value: 'name',
+        },
+      },
     },
     ...getConfigurableProperties('presetFields'),
   };

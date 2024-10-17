@@ -11,6 +11,7 @@ import { Model, Transaction, Transactionable } from '@nocobase/database';
 import { appendArrayColumn } from '@nocobase/evaluators';
 import { Logger } from '@nocobase/logger';
 import { parse } from '@nocobase/utils';
+import set from 'lodash/set';
 import type Plugin from './Plugin';
 import { EXECUTION_STATUS, JOB_STATUS } from './constants';
 import { Runner } from './instructions';
@@ -102,9 +103,13 @@ export default class Processor {
   }
 
   public async prepare() {
-    const { execution, transaction } = this;
+    const {
+      execution,
+      transaction,
+      options: { plugin },
+    } = this;
     if (!execution.workflow) {
-      execution.workflow = await execution.getWorkflow({ transaction });
+      execution.workflow = plugin.enabledCache.get(execution.workflowId);
     }
 
     const nodes = await execution.workflow.getNodes({ transaction });
@@ -157,17 +162,14 @@ export default class Processor {
       // for uncaught error, set to error
       this.logger.error(
         `execution (${this.execution.id}) run instruction [${node.type}] for node (${node.id}) failed: `,
-        { error: err },
+        err,
       );
       job = {
         result:
           err instanceof Error
             ? {
                 message: err.message,
-                stack:
-                  process.env.NODE_ENV === 'production'
-                    ? 'Error stack will not be shown under "production" environment, please check logs.'
-                    : err.stack,
+                ...err,
               }
             : err,
         status: JOB_STATUS.ERROR,
@@ -204,6 +206,9 @@ export default class Processor {
   public async run(node, input?) {
     const { instructions } = this.options.plugin;
     const instruction = instructions.get(node.type);
+    if (!instruction) {
+      return Promise.reject(new Error(`instruction [${node.type}] not found for node (#${node.id})`));
+    }
     if (typeof instruction.run !== 'function') {
       return Promise.reject(new Error('`run` should be implemented for customized execution of the node'));
     }
@@ -230,6 +235,9 @@ export default class Processor {
   private async recall(node, job) {
     const { instructions } = this.options.plugin;
     const instruction = instructions.get(node.type);
+    if (!instruction) {
+      return Promise.reject(new Error(`instruction [${node.type}] not found for node (#${node.id})`));
+    }
     if (typeof instruction.resume !== 'function') {
       return Promise.reject(
         new Error(`"resume" method should be implemented for [${node.type}] instruction of node (#${node.id})`),
@@ -377,7 +385,7 @@ export default class Processor {
       node,
     };
     for (const [name, fn] of this.options.plugin.functions.getEntities()) {
-      systemFns[name] = fn.bind(scope);
+      set(systemFns, name, fn.bind(scope));
     }
 
     const $scopes = {};

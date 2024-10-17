@@ -12,11 +12,11 @@ import { Schema, useField, useFieldSchema } from '@formily/react';
 import _ from 'lodash';
 import uniq from 'lodash/uniq';
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { withDynamicSchemaProps } from '../application/hoc/withDynamicSchemaProps';
 import { useCollectionManager_deprecated } from '../collection-manager';
 import { useCollectionParentRecordData } from '../data-source/collection-record/CollectionRecordProvider';
 import { isInFilterFormBlock } from '../filter-provider';
 import { mergeFilter } from '../filter-provider/utils';
+import { withDynamicSchemaProps } from '../hoc/withDynamicSchemaProps';
 import { RecordProvider, useRecord } from '../record-provider';
 import { SchemaComponentOptions } from '../schema-component';
 import { BlockProvider, useBlockRequestContext } from './BlockProvider';
@@ -61,10 +61,10 @@ export const TableSelectorParamsProvider = ({ params, children }: { params: Para
 };
 
 const InternalTableSelectorProvider = (props) => {
-  const { params, rowKey, extraFilter } = props;
+  const { params, rowKey, extraFilter, expandFlag: propsExpandFlag = false } = props;
   const field = useField();
   const { resource, service } = useBlockRequestContext();
-  const [expandFlag, setExpandFlag] = useState(false);
+  const [expandFlag, setExpandFlag] = useState(propsExpandFlag);
   const parentRecordData = useCollectionParentRecordData();
   // if (service.loading) {
   //   return <Spin />;
@@ -257,11 +257,11 @@ export const TableSelectorProvider = withDynamicSchemaProps((props: TableSelecto
     console.error(err);
   }
 
-  const { filter: parsedFilter } = useParsedFilter({
+  const { filter: parsedFilter, parseVariableLoading } = useParsedFilter({
     filterOption: params?.filter,
   });
 
-  if (!_.isEmpty(params?.filter) && _.isEmpty(parsedFilter)) {
+  if ((!_.isEmpty(params?.filter) && _.isEmpty(parsedFilter)) || parseVariableLoading) {
     return null;
   }
 

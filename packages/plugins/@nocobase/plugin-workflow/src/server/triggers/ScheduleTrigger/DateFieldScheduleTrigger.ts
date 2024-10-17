@@ -12,7 +12,7 @@ import parser from 'cron-parser';
 import type Plugin from '../../Plugin';
 import type { WorkflowModel } from '../../types';
 import { parseDateWithoutMs, SCHEDULE_MODE } from './utils';
-import { parseCollectionName } from '@nocobase/data-source-manager';
+import { parseCollectionName, SequelizeCollectionManager } from '@nocobase/data-source-manager';
 
 export type ScheduleOnField = {
   field: string;
@@ -54,7 +54,7 @@ function getDataOptionTime(record, on, dir = 1) {
     }
     case 'object': {
       const { field, offset = 0, unit = 1000 } = on;
-      if (!record.get(field)) {
+      if (!field || !record.get(field)) {
         return null;
       }
       const second = new Date(record.get(field).getTime());
@@ -68,10 +68,10 @@ function getDataOptionTime(record, on, dir = 1) {
 
 const DialectTimestampFnMap: { [key: string]: (col: string) => string } = {
   postgres(col) {
-    return `CAST(FLOOR(extract(epoch from "${col}")) AS INTEGER)`;
+    return `CAST(FLOOR(extract(epoch from ${col})) AS INTEGER)`;
   },
   mysql(col) {
-    return `CAST(FLOOR(UNIX_TIMESTAMP(\`${col}\`)) AS SIGNED INTEGER)`;
+    return `CAST(FLOOR(UNIX_TIMESTAMP(${col})) AS SIGNED INTEGER)`;
   },
   sqlite(col) {
     return `CAST(FLOOR(unixepoch(${col})) AS INTEGER)`;
@@ -127,10 +127,9 @@ export default class ScheduleTrigger {
   }
 
   async reload() {
-    const WorkflowRepo = this.workflow.app.db.getRepository('workflows');
-    const workflows = await WorkflowRepo.find({
-      filter: { enabled: true, type: 'schedule', 'config.mode': SCHEDULE_MODE.DATE_FIELD },
-    });
+    const workflows = Array.from(this.workflow.enabledCache.values()).filter(
+      (item) => item.type === 'schedule' && item.config.mode === SCHEDULE_MODE.DATE_FIELD,
+    );
 
     // NOTE: clear cached jobs in last cycle
     this.cache = new Map();
@@ -161,7 +160,7 @@ export default class ScheduleTrigger {
     { config: { collection, limit, startsOn, repeat, endsOn }, allExecuted }: WorkflowModel,
     currentDate: Date,
   ) {
-    const { db } = this.workflow.app;
+    const { dataSourceManager } = this.workflow.app;
     if (limit && allExecuted >= limit) {
       return [];
     }
@@ -174,6 +173,14 @@ export default class ScheduleTrigger {
     if (!startTimestamp) {
       return [];
     }
+
+    const [dataSourceName, collectionName] = parseCollectionName(collection);
+    const { collectionManager } = dataSourceManager.get(dataSourceName);
+    if (!(collectionManager instanceof SequelizeCollectionManager)) {
+      return [];
+    }
+    const { db } = collectionManager;
+    const { model } = collectionManager.getCollection(collectionName);
 
     const range = this.cacheCycle * 2;
 
@@ -192,9 +199,12 @@ export default class ScheduleTrigger {
       if (typeof repeat === 'number') {
         const tsFn = DialectTimestampFnMap[db.options.dialect];
         if (repeat > range && tsFn) {
+          const { field } = model.getAttributes()[startsOn.field];
           const modExp = fn(
             'MOD',
-            literal(`${Math.round(timestamp / 1000)} - ${tsFn(startsOn.field)}`),
+            literal(
+              `${Math.round(timestamp / 1000)} - ${db.sequelize.getQueryInterface().quoteIdentifiers(tsFn(field))}`,
+            ),
             Math.round(repeat / 1000),
           );
           conditions.push(where(modExp, { [Op.lt]: Math.round(range / 1000) }));
@@ -231,7 +241,6 @@ export default class ScheduleTrigger {
       });
     }
 
-    const { model } = db.getCollection(collection);
     return model.findAll({
       where: {
         [Op.and]: conditions,
@@ -358,7 +367,6 @@ export default class ScheduleTrigger {
     const { collection } = workflow.config;
     const [dataSourceName, collectionName] = parseCollectionName(collection);
     const event = `${collectionName}.afterSaveWithAssociations`;
-    const eventKey = `${collection}.afterSaveWithAssociations`;
     const name = getHookId(workflow, event);
     if (this.events.has(name)) {
       return;
@@ -385,14 +393,13 @@ export default class ScheduleTrigger {
     const { collection } = workflow.config;
     const [dataSourceName, collectionName] = parseCollectionName(collection);
     const event = `${collectionName}.afterSaveWithAssociations`;
-    const eventKey = `${collection}.afterSaveWithAssociations`;
     const name = getHookId(workflow, event);
-    if (this.events.has(eventKey)) {
-      const listener = this.events.get(name);
+    const listener = this.events.get(name);
+    if (listener) {
       // @ts-ignore
       const { db } = this.workflow.app.dataSourceManager.dataSources.get(dataSourceName).collectionManager;
       db.off(event, listener);
-      this.events.delete(eventKey);
+      this.events.delete(name);
     }
   }
 }

@@ -10,7 +10,8 @@
 import { ISchema, Schema } from '@formily/json-schema';
 import { Tooltip } from 'antd';
 import React, { useContext, useMemo } from 'react';
-import { CollectionFieldOptions_deprecated, useCollectionManager_deprecated } from '../../../collection-manager';
+import { CollectionFieldOptions_deprecated } from '../../../collection-manager';
+import { useCollectionManager } from '../../../data-source/collection/CollectionManagerProvider';
 import { useCompile, useGetFilterOptions } from '../../../schema-component';
 import { isSpecialCaseField } from '../../../schema-component/antd/form-item/hooks/useSpecialCase';
 import { FieldOption, Option } from '../type';
@@ -35,7 +36,14 @@ interface GetOptionsParams {
    * 不需要禁用选项，一般会在表达式中使用
    */
   noDisabled?: boolean;
-  loadChildren?: (option: Option) => Promise<void>;
+  /**
+   * 加载选项的 children
+   * @param option 需要加载 children 的选项
+   * @param activeKey 当前选项所对应的 key
+   * @param variablePath 变量路径数组，如 ['$user', 'nickname']
+   * @returns
+   */
+  loadChildren?: (option: Option, activeKey?: string, variablePath?: string[]) => Promise<void>;
   compile: (value: string) => any;
   isDisabled?: (params: IsDisabledParams) => boolean;
   getCollectionField?: (name: string) => CollectionFieldOptions_deprecated;
@@ -47,9 +55,9 @@ interface GetOptionsParams {
 
 interface BaseProps {
   // 当前字段
-  collectionField: CollectionFieldOptions_deprecated;
+  collectionField?: CollectionFieldOptions_deprecated;
   /** 当前字段的 `uiSchema`，和 `collectionField.uiSchema` 不同，该值也包含操作符中 schema（参见 useValues） */
-  uiSchema: any;
+  uiSchema?: any;
   /** 消费变量值的字段 */
   targetFieldSchema?: Schema;
   maxDepth?: number;
@@ -58,7 +66,7 @@ interface BaseProps {
   /**
    * 变量所对应的 collectionName，例如：$user 对应的 collectionName 是 users
    */
-  collectionName: string;
+  collectionName?: string;
   /**
    * 不需要禁用选项，一般会在表达式中使用
    */
@@ -113,7 +121,7 @@ const getChildren = (
 ): Option[] => {
   const result = options
     .map((option): Option => {
-      if (!option.target) {
+      if (!option.target || option.target === 'chinaRegions') {
         return {
           key: option.name,
           value: option.name,
@@ -152,6 +160,28 @@ const getChildren = (
   return result;
 };
 
+export const getLabelWithTooltip = (title: string, tooltip?: string) => {
+  return tooltip ? (
+    <Tooltip placement="left" title={tooltip} zIndex={9999}>
+      <span
+        style={{
+          position: 'relative',
+          display: 'inline-block',
+          marginLeft: -14,
+          paddingLeft: 14,
+          marginRight: -80,
+          paddingRight: 80,
+          zIndex: 1,
+        }}
+      >
+        {title}
+      </span>
+    </Tooltip>
+  ) : (
+    title
+  );
+};
+
 export const useBaseVariable = ({
   collectionField,
   uiSchema,
@@ -171,7 +201,7 @@ export const useBaseVariable = ({
   const compile = useCompile();
   const getFilterOptions = useGetFilterOptions();
   const { isDisabled } = useContext(BaseVariableContext) || {};
-  const { getCollectionField } = useCollectionManager_deprecated(dataSource);
+  const cm = useCollectionManager();
 
   const loadChildren = (option: Option): Promise<void> => {
     if (!option.field?.target) {
@@ -181,8 +211,9 @@ export const useBaseVariable = ({
     const target = option.field.target;
     return new Promise((resolve) => {
       setTimeout(() => {
+        const usedInVariable = true;
         const children = (
-          getChildren(returnFields(getFilterOptions(target, dataSource), option), {
+          getChildren(returnFields(getFilterOptions(target, dataSource, usedInVariable), option), {
             collectionField,
             uiSchema,
             targetFieldSchema,
@@ -192,7 +223,7 @@ export const useBaseVariable = ({
             loadChildren,
             compile,
             isDisabled: isDisabled || isDisabledDefault,
-            getCollectionField,
+            getCollectionField: cm.getCollectionField,
             deprecated,
           }) || []
         )
@@ -233,25 +264,7 @@ export const useBaseVariable = ({
 
   const result = useMemo(() => {
     return {
-      label: tooltip ? (
-        <Tooltip placement="left" title={tooltip} zIndex={9999}>
-          <span
-            style={{
-              position: 'relative',
-              display: 'inline-block',
-              marginLeft: -14,
-              paddingLeft: 14,
-              marginRight: -80,
-              paddingRight: 80,
-              zIndex: 1,
-            }}
-          >
-            {title}
-          </span>
-        </Tooltip>
-      ) : (
-        title
-      ),
+      label: getLabelWithTooltip(title, tooltip),
       value: name,
       key: name,
       isLeaf: noChildren,

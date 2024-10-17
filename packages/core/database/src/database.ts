@@ -15,9 +15,9 @@ import { EventEmitter } from 'events';
 import { backOff } from 'exponential-backoff';
 import glob from 'glob';
 import lodash from 'lodash';
-import safeJsonStringify from 'safe-json-stringify';
 import { nanoid } from 'nanoid';
 import { basename, isAbsolute, resolve } from 'path';
+import safeJsonStringify from 'safe-json-stringify';
 import semver from 'semver';
 import {
   DataTypes,
@@ -34,7 +34,6 @@ import {
 import { SequelizeStorage, Umzug } from 'umzug';
 import { Collection, CollectionOptions, RepositoryType } from './collection';
 import { CollectionFactory } from './collection-factory';
-import { CollectionGroupManager } from './collection-group-manager';
 import { ImporterReader, ImportFileExtension } from './collection-importer';
 import DatabaseUtils from './database-utils';
 import ReferencesMap from './features/references-map';
@@ -45,6 +44,8 @@ import { Field, FieldContext, RelationField } from './fields';
 import { checkDatabaseVersion } from './helpers';
 import { InheritedCollection } from './inherited-collection';
 import InheritanceMap from './inherited-map';
+import { InterfaceManager } from './interface-manager';
+import { registerInterfaces } from './interfaces/utils';
 import { registerBuiltInListeners } from './listeners';
 import { MigrationItem, Migrations } from './migration';
 import { Model } from './model';
@@ -179,7 +180,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
   modelHook: ModelHook;
   delayCollectionExtend = new Map<string, { collectionOptions: CollectionOptions; mergeOptions?: any }[]>();
   logger: Logger;
-  collectionGroupManager = new CollectionGroupManager(this);
+  interfaceManager = new InterfaceManager(this);
 
   collectionFactory: CollectionFactory = new CollectionFactory(this);
   declare emitAsync: (event: string | symbol, ...args: any[]) => Promise<boolean>;
@@ -238,9 +239,15 @@ export class Database extends EventEmitter implements AsyncEmitter {
     }
 
     this.options = opts;
-    this.logger.debug(`create database instance: ${safeJsonStringify(this.options)}`, {
-      databaseInstanceId: this.instanceId,
-    });
+    this.logger.debug(
+      `create database instance: ${safeJsonStringify(
+        // remove sensitive information
+        lodash.omit(this.options, ['storage', 'host', 'password']),
+      )}`,
+      {
+        databaseInstanceId: this.instanceId,
+      },
+    );
 
     const sequelizeOptions = this.sequelizeOptions(this.options);
     this.sequelize = new Sequelize(sequelizeOptions);
@@ -270,6 +277,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
       });
     }
 
+    registerInterfaces(this);
     registerFieldValueParsers(this);
 
     this.initOperators();
@@ -451,15 +459,14 @@ export class Database extends EventEmitter implements AsyncEmitter {
       }
 
       if (options.underscored) {
-        if (lodash.get(options, 'sortable.scopeKey')) {
-          options.sortable.scopeKey = snakeCase(options.sortable.scopeKey);
-        }
-
         if (lodash.get(options, 'indexes')) {
           // change index fields to snake case
           options.indexes = options.indexes.map((index) => {
             if (index.fields) {
               index.fields = index.fields.map((field) => {
+                if (field.name) {
+                  return { name: snakeCase(field.name), ...field };
+                }
                 return snakeCase(field);
               });
             }
@@ -530,7 +537,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
       options.underscored = true;
     }
 
-    this.logger.debug(`beforeDefineCollection: ${safeJsonStringify(options)}`, {
+    this.logger.trace(`beforeDefineCollection: ${safeJsonStringify(options)}`, {
       databaseInstanceId: this.instanceId,
     });
 
@@ -801,7 +808,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
 
   /* istanbul ignore next -- @preserve */
   async auth(options: Omit<QueryOptions, 'retry'> & { retry?: number | Pick<QueryOptions, 'retry'> } = {}) {
-    const { retry = 10, ...others } = options;
+    const { retry = 9, ...others } = options;
     const startingDelay = 50;
     const timeMultiple = 2;
 
@@ -831,7 +838,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
         timeMultiple: timeMultiple,
       });
     } catch (error) {
-      throw new Error('Connection failed, please check your database connection credentials and try again.');
+      throw new Error(`Unable to connect to the database`, { cause: error });
     }
   }
 
@@ -839,7 +846,7 @@ export class Database extends EventEmitter implements AsyncEmitter {
    * @internal
    */
   async checkVersion() {
-    return await checkDatabaseVersion(this);
+    return process.env.DB_SKIP_VERSION_CHECK === 'on' || (await checkDatabaseVersion(this));
   }
 
   /**
@@ -850,11 +857,9 @@ export class Database extends EventEmitter implements AsyncEmitter {
       const result = await this.sequelize.query(`SHOW VARIABLES LIKE 'lower_case_table_names'`, { plain: true });
 
       if (result?.Value === '1' && !this.options.underscored) {
-        console.log(
+        throw new Error(
           `Your database lower_case_table_names=1, please add ${chalk.yellow('DB_UNDERSCORED=true')} to the .env file`,
         );
-
-        process.exit();
       }
     }
 

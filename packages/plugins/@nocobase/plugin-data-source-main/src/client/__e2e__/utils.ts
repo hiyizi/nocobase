@@ -127,7 +127,11 @@ export async function testDefaultValue({
     await page.getByLabel('variable-button').click();
     await testSupportedAndUnsupportedVariables(page, supportedVariables, unsupportedVariables);
     for (const value of variableValue) {
-      await page.getByRole('menuitemcheckbox', { name: value }).click();
+      if (value === 'ID') {
+        await page.getByRole('menuitemcheckbox', { name: value, exact: true }).click();
+      } else {
+        await page.getByRole('menuitemcheckbox', { name: value }).click();
+      }
     }
     await page.getByRole('button', { name: 'OK', exact: true }).click();
 
@@ -327,7 +331,7 @@ export class CollectionSettings {
   }
 
   private async ['File storage'](value: string) {
-    await this.page.getByLabel('block-item-Select-collections-File storage').getByTestId('select-single').click();
+    await this.page.getByLabel('block-item-RemoteSelect-collections-File storage').getByTestId('select-single').click();
     await this.page.getByRole('option', { name: value }).click();
   }
 

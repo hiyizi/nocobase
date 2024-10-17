@@ -10,11 +10,13 @@
 import { registerActions } from '@nocobase/actions';
 import { actions as authActions, AuthManager, AuthManagerOptions } from '@nocobase/auth';
 import { Cache, CacheManager, CacheManagerOptions } from '@nocobase/cache';
+import { DataSourceManager, SequelizeDataSource } from '@nocobase/data-source-manager';
 import Database, { CollectionOptions, IDatabaseOptions } from '@nocobase/database';
 import {
   createLogger,
   createSystemLogger,
   getLoggerFilePath,
+  Logger,
   LoggerOptions,
   RequestLoggerOptions,
   SystemLogger,
@@ -32,7 +34,7 @@ import Koa, { DefaultContext as KoaDefaultContext, DefaultState as KoaDefaultSta
 import compose from 'koa-compose';
 import lodash from 'lodash';
 import { RecordableHistogram } from 'node:perf_hooks';
-import { basename, resolve } from 'path';
+import path, { basename, resolve } from 'path';
 import semver from 'semver';
 import { createACL } from './acl';
 import { AppCommand } from './app-command';
@@ -51,13 +53,15 @@ import {
 } from './helper';
 import { ApplicationVersion } from './helpers/application-version';
 import { Locale } from './locale';
+import { MainDataSource } from './main-data-source';
+import { parseVariables } from './middlewares';
+import { dataTemplate } from './middlewares/data-template';
+import validateFilterParams from './middlewares/validate-filter-params';
 import { Plugin } from './plugin';
 import { InstallOptions, PluginManager } from './plugin-manager';
-import { DataSourceManager, SequelizeDataSource } from '@nocobase/data-source-manager';
+import { SyncManager } from './sync-manager';
+
 import packageJson from '../package.json';
-import { MainDataSource } from './main-data-source';
-import validateFilterParams from './middlewares/validate-filter-params';
-import path from 'path';
 
 export type PluginType = string | typeof Plugin;
 export type PluginConfiguration = PluginType | [PluginType, any];
@@ -112,6 +116,7 @@ export interface ApplicationOptions {
    */
   perfHooks?: boolean;
   telemetry?: AppTelemetryOptions;
+  skipSupervisor?: boolean;
 }
 
 export interface DefaultState extends KoaDefaultState {
@@ -210,12 +215,20 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
   public perfHistograms = new Map<string, RecordableHistogram>();
   protected plugins = new Map<string, Plugin>();
   protected _appSupervisor: AppSupervisor = AppSupervisor.getInstance();
-  protected _started: boolean;
+  protected _started: Date | null = null;
   private _authenticated = false;
   private _maintaining = false;
   private _maintainingCommandStatus: MaintainingCommandStatus;
   private _maintainingStatusBeforeCommand: MaintainingCommandStatus | null;
   private _actionCommand: Command;
+
+  /**
+   * @internal
+   */
+  public syncManager: SyncManager;
+  public requestLogger: Logger;
+  private sqlLogger: Logger;
+  protected _logger: SystemLogger;
 
   constructor(public options: ApplicationOptions) {
     super();
@@ -223,12 +236,23 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
     this.rawOptions = this.name == 'main' ? lodash.cloneDeep(options) : {};
     this.init();
 
-    this._appSupervisor.addApp(this);
+    if (!options.skipSupervisor) {
+      this._appSupervisor.addApp(this);
+    }
   }
 
-  protected _logger: SystemLogger;
+  /**
+   * @experimental
+   */
+  get started() {
+    return this._started;
+  }
 
   get logger() {
+    return this._logger;
+  }
+
+  get log() {
     return this._logger;
   }
 
@@ -354,10 +378,6 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
 
   get version() {
     return this._version;
-  }
-
-  get log() {
-    return this._logger;
   }
 
   get name() {
@@ -502,6 +522,8 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
       await this.telemetry.shutdown();
     }
 
+    this.closeLogger();
+
     const oldDb = this.db;
 
     this.init();
@@ -540,9 +562,11 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
 
     this._cacheManager = await createCacheManager(this, this.options.cacheManager);
 
+    this.log.debug('init plugins');
     this.setMaintainingMessage('init plugins');
     await this.pm.initPlugins();
 
+    this.log.debug('loading app...');
     this.setMaintainingMessage('start load');
     this.setMaintainingMessage('emit beforeLoad');
 
@@ -687,7 +711,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
     }
     if (options?.reqId) {
       this.context.reqId = options.reqId;
-      this._logger = this._logger.child({ reqId: this.context.reqId });
+      this._logger = this._logger.child({ reqId: this.context.reqId }) as any;
     }
     this._maintainingStatusBeforeCommand = this._maintainingCommandStatus;
 
@@ -743,7 +767,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
       return;
     }
 
-    this._started = true;
+    this._started = new Date();
 
     if (options.checkInstall && !(await this.isInstalled())) {
       throw new ApplicationNotInstall(
@@ -751,6 +775,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
       );
     }
 
+    this.log.debug(`starting app...`);
     this.setMaintainingMessage('starting app...');
 
     if (this.db.closed()) {
@@ -778,7 +803,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
   }
 
   async isStarted() {
-    return this._started;
+    return Boolean(this._started);
   }
 
   /**
@@ -799,7 +824,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
 
     this.log.info('restarting...');
 
-    this._started = false;
+    this._started = null;
     await this.emitAsync('beforeStop');
     await this.reload(options);
     await this.start(options);
@@ -849,7 +874,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
 
     this.stopped = true;
     log.info(`app has stopped`, { method: 'stop' });
-    this._started = false;
+    this._started = null;
   }
 
   async destroy(options: any = {}) {
@@ -862,6 +887,8 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
     await this.emitAsync('afterDestroy', this, options);
 
     this.log.debug('finish destroy app', { method: 'destory' });
+
+    this.closeLogger();
   }
 
   async isInstalled() {
@@ -1043,19 +1070,40 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
     return command;
   }
 
-  protected init() {
-    const options = this.options;
-
+  protected initLogger(options: AppLoggerOptions) {
     this._logger = createSystemLogger({
       dirname: getLoggerFilePath(this.name),
       filename: 'system',
       seperateError: true,
-      ...(options.logger?.system || {}),
+      ...(options?.system || {}),
     }).child({
       reqId: this.context.reqId,
       app: this.name,
       module: 'application',
+      // Due to the use of custom log levels,
+      // we have to use any type here until Winston updates the type definitions.
+    }) as any;
+    this.requestLogger = createLogger({
+      dirname: getLoggerFilePath(this.name),
+      filename: 'request',
+      ...(options?.request || {}),
     });
+    this.sqlLogger = this.createLogger({
+      filename: 'sql',
+      level: 'debug',
+    });
+  }
+
+  protected closeLogger() {
+    this.log?.close();
+    this.requestLogger?.close();
+    this.sqlLogger?.close();
+  }
+
+  protected init() {
+    const options = this.options;
+
+    this.initLogger(options.logger);
 
     this.reInitEvents();
 
@@ -1072,6 +1120,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
 
     this._cli = this.createCLI();
     this._i18n = createI18n(options);
+    this.syncManager = new SyncManager(this);
     this.context.db = this.db;
 
     /**
@@ -1111,6 +1160,12 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
     this._dataSourceManager.use(this._authManager.middleware(), { tag: 'auth' });
     this._dataSourceManager.use(validateFilterParams, { tag: 'validate-filter-params', before: ['auth'] });
 
+    this._dataSourceManager.use(parseVariables, {
+      group: 'parseVariables',
+      after: 'acl',
+    });
+    this._dataSourceManager.use(dataTemplate, { group: 'dataTemplate', after: 'acl' });
+
     this._locales = new Locale(createAppProxy(this));
 
     if (options.perfHooks) {
@@ -1137,17 +1192,16 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
       useACL: options.acl,
     });
 
-    this._dataSourceManager = new DataSourceManager();
+    this._dataSourceManager = new DataSourceManager({
+      logger: this.logger,
+      app: this,
+    });
 
     // can not use await here
     this.dataSourceManager.dataSources.set('main', mainDataSourceInstance);
   }
 
   protected createDatabase(options: ApplicationOptions) {
-    const sqlLogger = this.createLogger({
-      filename: 'sql',
-      level: 'debug',
-    });
     const logging = (msg: any) => {
       if (typeof msg === 'string') {
         msg = msg.replace(/[\r\n]/gm, '').replace(/\s+/g, ' ');
@@ -1155,7 +1209,7 @@ export class Application<StateT = DefaultState, ContextT = DefaultContext> exten
       if (msg.includes('INSERT INTO')) {
         msg = msg.substring(0, 2000) + '...';
       }
-      sqlLogger.debug({ message: msg, app: this.name, reqId: this.context.reqId });
+      this.sqlLogger.debug({ message: msg, app: this.name, reqId: this.context.reqId });
     };
     const dbOptions = options.database instanceof Database ? options.database.options : options.database;
     const db = new Database({

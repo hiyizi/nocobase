@@ -1,7 +1,7 @@
 /**
  * defaultShowCode: true
  */
-import React from 'react';
+import { useFieldSchema } from '@formily/react';
 import {
   Action,
   Application,
@@ -14,11 +14,12 @@ import {
   SchemaInitializerActionModal,
   useSchemaInitializer,
 } from '@nocobase/client';
+import React from 'react';
 import { appOptions } from './schema-initializer-common';
-import { useFieldSchema } from '@formily/react';
+import { MenuOutlined } from '@ant-design/icons';
 
 const myInitializer = new SchemaInitializer({
-  name: 'MyInitializer',
+  name: 'myInitializer',
   title: 'Button Text',
   wrap: Grid.wrap,
   items: [
@@ -31,6 +32,7 @@ const myInitializer = new SchemaInitializer({
             title="Add Card"
             buttonText="Add Card"
             isItem
+            icon={<MenuOutlined />}
             onSubmit={({ title }) => {
               insert({
                 type: 'void',
@@ -50,6 +52,36 @@ const myInitializer = new SchemaInitializer({
             }}
           ></SchemaInitializerActionModal>
         );
+      },
+    },
+    {
+      name: 'b',
+      type: 'actionModal',
+      useComponentProps() {
+        const { insert } = useSchemaInitializer();
+        return {
+          isItem: true,
+          icon: <MenuOutlined />,
+          buttonText: 'Add Card 2',
+          title: 'Add Card Form 2',
+          schema: {
+            title: {
+              type: 'string',
+              title: 'Title',
+              required: true,
+              'x-component': 'Input',
+              'x-decorator': 'FormItem',
+            },
+          },
+          onSubmit({ title }) {
+            insert({
+              type: 'void',
+              title,
+              'x-decorator': 'CardItem',
+              'x-component': 'Hello',
+            });
+          },
+        };
       },
     },
   ],

@@ -10,9 +10,6 @@
 import { css } from '@emotion/css';
 import { createForm, Field } from '@formily/core';
 import { FieldContext, FormContext, useField } from '@formily/react';
-import { Space, Switch, Table, TableColumnProps, Tag, Tooltip, message } from 'antd';
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
   Action,
   AddCollectionField,
@@ -26,6 +23,7 @@ import {
   SchemaComponent,
   SyncFieldsAction,
   SyncSQLFieldsAction,
+  useAPIClient,
   useAttach,
   useBulkDestroyActionAndRefreshCM,
   useCollectionManager_deprecated,
@@ -36,9 +34,12 @@ import {
   useResourceActionContext,
   useResourceContext,
   ViewCollectionField,
-  useAPIClient,
 } from '@nocobase/client';
+import { message, Space, Switch, Table, TableColumnProps, Tag, Tooltip } from 'antd';
+import React, { createContext, useContext, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 
+import { FilterTargetKeyAlert } from '../../CollectionsManager/FilterTargetKeyAlert';
 import { collection } from './schemas/collectionFields';
 const resourceActionProps = {
   association: {
@@ -59,7 +60,7 @@ const resourceActionProps = {
   },
 };
 
-const CollectionListContext = createContext(null);
+export const CollectionListContext = createContext(null);
 
 const CollectionFieldsProvider = (props) => {
   return (
@@ -137,11 +138,11 @@ const CurrentFields = (props) => {
             method: 'post',
             data: { titleField: checked ? record.name : 'id' },
           });
-          message.success(t('Saved successfully'));
+          ctx?.refresh?.();
           await props.refreshAsync();
           setLoadingRecord(null);
           refreshCM();
-          ctx?.refresh?.();
+          message.success(t('Saved successfully'));
         };
 
         return isTitleField(record) ? (
@@ -178,7 +179,7 @@ const CurrentFields = (props) => {
 
         return (
           <RecordProvider record={record} parent={parentRecordData}>
-            <Space>
+            <Space size="middle">
               <EditCollectionField role="button" aria-label={`edit-button-${record.name}`} type="primary" />
               <Action.Link {...deleteProps} />
             </Space>
@@ -219,13 +220,14 @@ const CurrentFields = (props) => {
 const InheritFields = (props) => {
   const compile = useCompile();
   const { getInterface } = useCollectionManager_deprecated();
-  const { resource, targetKey } = props.collectionResource || {};
+  const { targetKey } = props.collectionResource || {};
   const parentRecord = useRecord();
   const [loadingRecord, setLoadingRecord] = React.useState(null);
   const { t } = useTranslation();
   const { refreshCM, isTitleField } = useCollectionManager_deprecated();
   const { [targetKey]: filterByTk, titleField, name } = parentRecord;
   const ctx = useContext(CollectionListContext);
+  const api = useAPIClient();
 
   const columns: TableColumnProps<any>[] = [
     {
@@ -246,20 +248,19 @@ const InheritFields = (props) => {
       dataIndex: 'titleField',
       title: t('Title field'),
       render(_, record) {
-        const handleChange = (checked) => {
+        const handleChange = async (checked) => {
           setLoadingRecord(record);
-          resource
-            .update({ filterByTk, values: { titleField: checked ? record.name : 'id' } })
-            .then(async () => {
-              await props.refreshAsync();
-              setLoadingRecord(null);
-              refreshCM();
-              ctx?.refresh?.();
-            })
-            .catch((err) => {
-              setLoadingRecord(null);
-              console.error(err);
-            });
+
+          await api.request({
+            url: `collections:update?filterByTk=${filterByTk}`,
+            method: 'post',
+            data: { titleField: checked ? record.name : 'id' },
+          });
+          ctx?.refresh?.();
+          await props.refreshAsync();
+          setLoadingRecord(null);
+          refreshCM();
+          message.success(t('Saved successfully'));
         };
 
         return isTitleField(record) ? (
@@ -439,6 +440,7 @@ const CollectionFieldsInternal = () => {
   return (
     <FormContext.Provider value={form}>
       <FieldContext.Provider value={f}>
+        <FilterTargetKeyAlert collectionName={name} />
         <Space
           align={'end'}
           className={css`

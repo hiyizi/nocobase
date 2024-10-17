@@ -17,7 +17,7 @@ export class G2PlotChart extends Chart {
       name,
       title,
       Component: getAntChart(Component),
-      config: ['xField', 'yField', 'seriesField', ...(config || [])],
+      config: ['xField', 'yField', 'seriesField', 'size', ...(config || [])],
     });
     this.addConfigs(configs);
   }
@@ -82,7 +82,6 @@ export class G2PlotChart extends Chart {
         },
       },
       data,
-      theme: 'classic',
       animate: {
         enter: {
           type: false,

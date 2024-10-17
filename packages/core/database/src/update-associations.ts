@@ -490,6 +490,10 @@ export async function updateMultipleAssociation(
       accessorOptions['through'] = throughValue;
     }
 
+    if (pk !== targetKey && !isUndefinedOrNull(item[pk]) && isUndefinedOrNull(item[targetKey])) {
+      throw new Error(`${targetKey} field value is empty`);
+    }
+
     if (isUndefinedOrNull(item[targetKey])) {
       // create new record
       const instance = await model[createAccessor](item, accessorOptions);
@@ -538,9 +542,20 @@ export async function updateMultipleAssociation(
         associationContext: association,
         updateAssociationValues: keys,
       });
+
       newItems.push(instance);
     }
   }
 
-  model.setDataValue(key, setItems.concat(newItems));
+  for (const newItem of newItems) {
+    const existIndexInSetItems = setItems.findIndex((setItem) => setItem[targetKey] === newItem[targetKey]);
+
+    if (existIndexInSetItems !== -1) {
+      setItems[existIndexInSetItems] = newItem;
+    } else {
+      setItems.push(newItem);
+    }
+  }
+
+  model.setDataValue(key, setItems);
 }

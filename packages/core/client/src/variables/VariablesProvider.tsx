@@ -28,31 +28,31 @@ import { uniq } from './utils/uniq';
 export const VariablesContext = createContext<VariablesContextType>(null);
 VariablesContext.displayName = 'VariablesContext';
 
-const variableToCollectionName: {
-  collectionName?: string;
-  dataSource?: string;
-} = {};
+const variablesStore: Record<string, VariableOption> = {};
 
-const getFieldPath = (variablePath: string, variableToCollectionName: Record<string, any>) => {
+const getFieldPath = (variablePath: string, variablesStore: Record<string, VariableOption>) => {
   let dataSource;
+  let variableOption: VariableOption;
   const list = variablePath.split('.');
   const result = list.map((item) => {
-    if (variableToCollectionName[item]) {
-      dataSource = variableToCollectionName[item].dataSource;
-      return variableToCollectionName[item].collectionName;
+    if (variablesStore[item]) {
+      dataSource = variablesStore[item].dataSource;
+      variableOption = variablesStore[item];
+      return variablesStore[item].collectionName;
     }
     return item;
   });
   return {
     fieldPath: result.join('.'),
     dataSource,
+    variableOption,
   };
 };
 
 const VariablesProvider = ({ children }) => {
   const ctxRef = useRef<Record<string, any>>({});
   const api = useAPIClient();
-  const { getCollectionJoinField } = useCollectionManager_deprecated();
+  const { getCollectionJoinField, getCollection } = useCollectionManager_deprecated();
   const compile = useCompile();
   const { builtinVariables } = useBuiltInVariables();
 
@@ -69,24 +69,33 @@ const VariablesProvider = ({ children }) => {
    * 2. 如果某个 `key` 不存在，且 `key` 是一个关联字段，则从 api 中获取数据，并缓存到 `ctx` 中
    * 3. 如果某个 `key` 不存在，且 `key` 不是一个关联字段，则返回当前值
    */
-  const getValue = useCallback(
+  const getResult = useCallback(
     async (
       variablePath: string,
       localVariables?: VariableOption[],
       options?: {
         /** 第一次请求时，需要包含的关系字段 */
         appends?: string[];
+        /** do not request when the association field is empty */
+        doNotRequest?: boolean;
+        /**
+         * The operator related to the current field, provided when parsing the default value of the field
+         */
+        fieldOperator?: string | void;
       },
     ) => {
       const list = variablePath.split('.');
       const variableName = list[0];
-      const _variableToCollectionName = mergeVariableToCollectionNameWithLocalVariables(
-        variableToCollectionName,
-        localVariables,
-      );
+      const _variableToCollectionName = mergeVariableToCollectionNameWithLocalVariables(variablesStore, localVariables);
       let current = mergeCtxWithLocalVariables(ctxRef.current, localVariables);
-      const { fieldPath, dataSource } = getFieldPath(variableName, _variableToCollectionName);
+      const { fieldPath, dataSource, variableOption } = getFieldPath(variableName, _variableToCollectionName);
       let collectionName = fieldPath;
+
+      const { fieldPath: fieldPathOfVariable } = getFieldPath(variablePath, _variableToCollectionName);
+      const collectionNameOfVariable =
+        list.length === 1
+          ? variableOption.collectionName
+          : getCollectionJoinField(fieldPathOfVariable, dataSource)?.target;
 
       if (!(variableName in current)) {
         throw new Error(`VariablesProvider: ${variableName} is not found`);
@@ -94,17 +103,24 @@ const VariablesProvider = ({ children }) => {
 
       for (let index = 0; index < list.length; index++) {
         if (current == null) {
-          return current;
+          return {
+            value: current === undefined ? variableOption.defaultValue : current,
+            dataSource,
+            collectionName: collectionNameOfVariable,
+          };
         }
 
         const key = list[index];
         const { fieldPath } = getFieldPath(list.slice(0, index + 1).join('.'), _variableToCollectionName);
         const associationField: CollectionFieldOptions_deprecated = getCollectionJoinField(fieldPath, dataSource);
+        const collectionPrimaryKey = getCollection(collectionName)?.getPrimaryKey();
         if (Array.isArray(current)) {
           const result = current.map((item) => {
-            if (shouldToRequest(item?.[key]) && item?.id != null) {
+            if (!options?.doNotRequest && shouldToRequest(item?.[key]) && item?.[collectionPrimaryKey] != null) {
               if (associationField?.target) {
-                const url = `/${collectionName}/${item.id}/${key}:${getAction(associationField.type)}`;
+                const url = `/${collectionName}/${
+                  item[associationField.sourceKey || collectionPrimaryKey]
+                }/${key}:${getAction(associationField.type)}`;
                 if (hasRequested(url)) {
                   return getRequested(url);
                 }
@@ -127,9 +143,16 @@ const VariablesProvider = ({ children }) => {
             }
             return item?.[key];
           });
-          current = _.flatten(await Promise.all(result));
-        } else if (shouldToRequest(current[key]) && current.id != null && associationField?.target) {
-          const url = `/${collectionName}/${current.id}/${key}:${getAction(associationField.type)}`;
+          current = removeThroughCollectionFields(_.flatten(await Promise.all(result)), associationField);
+        } else if (
+          !options?.doNotRequest &&
+          shouldToRequest(current[key]) &&
+          current[collectionPrimaryKey] != null &&
+          associationField?.target
+        ) {
+          const url = `/${collectionName}/${
+            current[associationField.sourceKey || collectionPrimaryKey]
+          }/${key}:${getAction(associationField.type)}`;
           let data = null;
           if (hasRequested(url)) {
             data = await getRequested(url);
@@ -152,9 +175,9 @@ const VariablesProvider = ({ children }) => {
             raw(current)[key] = data.data.data;
           }
 
-          current = getValuesByPath(current, key);
+          current = removeThroughCollectionFields(getValuesByPath(current, key), associationField);
         } else {
-          current = getValuesByPath(current, key);
+          current = removeThroughCollectionFields(getValuesByPath(current, key), associationField);
         }
 
         if (associationField?.target) {
@@ -162,7 +185,14 @@ const VariablesProvider = ({ children }) => {
         }
       }
 
-      return compile(_.isFunction(current) ? current() : current);
+      const _value = compile(
+        _.isFunction(current) ? current({ fieldOperator: options?.fieldOperator, isParsingVariable: true }) : current,
+      );
+      return {
+        value: _value === undefined ? variableOption.defaultValue : _value,
+        dataSource,
+        collectionName: collectionNameOfVariable,
+      };
     },
     [getCollectionJoinField],
   );
@@ -182,12 +212,10 @@ const VariablesProvider = ({ children }) => {
           [variableOption.name]: variableOption.ctx,
         };
       });
-      if (variableOption.collectionName) {
-        variableToCollectionName[variableOption.name] = {
-          collectionName: variableOption.collectionName,
-          dataSource: variableOption.dataSource,
-        };
-      }
+      variablesStore[variableOption.name] = {
+        ...variableOption,
+        defaultValue: _.has(variableOption, 'defaultValue') ? variableOption.defaultValue : null,
+      };
     },
     [setCtx],
   );
@@ -197,13 +225,8 @@ const VariablesProvider = ({ children }) => {
       return null;
     }
 
-    const { collectionName, dataSource } = variableToCollectionName[variableName] || {};
-
     return {
-      name: variableName,
-      ctx: ctxRef.current[variableName],
-      collectionName,
-      dataSource,
+      ...variablesStore[variableName],
     };
   }, []);
 
@@ -214,7 +237,7 @@ const VariablesProvider = ({ children }) => {
         delete next[variableName];
         return next;
       });
-      delete variableToCollectionName[variableName];
+      delete variablesStore[variableName];
     },
     [setCtx],
   );
@@ -232,6 +255,12 @@ const VariablesProvider = ({ children }) => {
       options?: {
         /** 第一次请求时，需要包含的关系字段 */
         appends?: string[];
+        /** do not request when the association field is empty */
+        doNotRequest?: boolean;
+        /**
+         * The operator related to the current field, provided when parsing the default value of the field
+         */
+        fieldOperator?: string | void;
       },
     ) => {
       if (!isVariable(str)) {
@@ -243,11 +272,14 @@ const VariablesProvider = ({ children }) => {
       }
 
       const path = getPath(str);
-      const value = await getValue(path, localVariables as VariableOption[], options);
+      const result = await getResult(path, localVariables as VariableOption[], options);
 
-      return uniq(filterEmptyValues(value));
+      return {
+        ...result,
+        value: uniq(filterEmptyValues(result.value)),
+      };
     },
-    [getValue],
+    [getResult],
   );
 
   const getCollectionField = useCallback(
@@ -260,17 +292,18 @@ const VariablesProvider = ({ children }) => {
         localVariables = _.isArray(localVariables) ? localVariables : [localVariables];
       }
 
-      const path = getPath(variableString);
-      const { fieldPath, dataSource } = getFieldPath(
-        path,
-        mergeVariableToCollectionNameWithLocalVariables(variableToCollectionName, localVariables as VariableOption[]),
+      const _variableToCollectionName = mergeVariableToCollectionNameWithLocalVariables(
+        variablesStore,
+        localVariables as VariableOption[],
       );
+      const path = getPath(variableString);
+      const { fieldPath, dataSource } = getFieldPath(path, _variableToCollectionName);
       let result = getCollectionJoinField(fieldPath, dataSource);
 
       // 当仅有一个例如 `$user` 这样的字符串时，需要拼一个假的 `collectionField` 返回
       if (!result && !path.includes('.')) {
         result = {
-          target: variableToCollectionName[path]?.collectionName,
+          target: _variableToCollectionName[path]?.collectionName,
         };
       }
 
@@ -281,7 +314,10 @@ const VariablesProvider = ({ children }) => {
 
   useEffect(() => {
     builtinVariables.forEach((variableOption) => {
-      registerVariable(variableOption);
+      registerVariable({
+        ...variableOption,
+        defaultValue: _.has(variableOption, 'defaultValue') ? variableOption.defaultValue : null,
+      });
     });
   }, [builtinVariables, registerVariable]);
 
@@ -335,19 +371,40 @@ function mergeCtxWithLocalVariables(ctx: Record<string, any>, localVariables?: V
 }
 
 function mergeVariableToCollectionNameWithLocalVariables(
-  variableToCollectionName: Record<string, any>,
+  variablesStore: Record<string, VariableOption>,
   localVariables?: VariableOption[],
 ) {
-  variableToCollectionName = { ...variableToCollectionName };
+  variablesStore = { ...variablesStore };
 
   localVariables?.forEach((item) => {
-    if (item.collectionName) {
-      variableToCollectionName[item.name] = {
-        collectionName: item.collectionName,
-        dataSource: item.dataSource,
-      };
-    }
+    variablesStore[item.name] = {
+      ...item,
+      defaultValue: _.has(item, 'defaultValue') ? item.defaultValue : null,
+    };
   });
 
-  return variableToCollectionName;
+  return variablesStore;
+}
+
+/**
+ * 去除关系字段中的中间表字段。
+ * 如果在创建新记录的时候，存在关系字段的中间表字段，提交的时候会报错，所以需要去除。
+ * @param value
+ * @param associationField
+ * @returns
+ */
+export function removeThroughCollectionFields(
+  value: Record<string, any> | Record<string, any>[],
+  associationField: CollectionFieldOptions_deprecated,
+) {
+  if (!associationField?.through || !value) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      return _.omit(item, associationField.through);
+    });
+  }
+  return _.omit(value, associationField.through);
 }

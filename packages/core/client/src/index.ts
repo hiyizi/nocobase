@@ -60,13 +60,18 @@ export * from './testUtils';
 export * from './user';
 export * from './variables';
 
-export { withDynamicSchemaProps } from './application/hoc/withDynamicSchemaProps';
+export { withDynamicSchemaProps } from './hoc/withDynamicSchemaProps';
 
+export { SchemaSettingsActionLinkItem } from './modules/actions/link/customizeLinkActionSettings';
+export { useURLAndHTMLSchema } from './modules/actions/link/useURLAndHTMLSchema';
 export * from './modules/blocks/BlockSchemaToolbar';
 export * from './modules/blocks/data-blocks/form';
 export * from './modules/blocks/data-blocks/table';
 export * from './modules/blocks/data-blocks/table-selector';
-export * from './modules/blocks/useParentRecordCommon';
 export * from './modules/blocks/index';
+export * from './modules/blocks/useParentRecordCommon';
+export { OpenModeProvider, useOpenModeContext } from './modules/popup/OpenModeProvider';
+export { PopupContextProvider } from './modules/popup/PopupContextProvider';
+export { usePopupUtils } from './modules/popup/usePopupUtils';
 
-export { DeclareVariable } from './modules/variable/DeclareVariable';
+export { VariablePopupRecordProvider } from './modules/variable/variablesProvider/VariablePopupRecordProvider';

@@ -8,13 +8,13 @@
  */
 
 import {
+  expect,
   expectSettingsMenu,
   oneDetailBlockWithM2oFieldToGeneral,
   oneEmptyDetailsBlock,
   test,
-  expect,
 } from '@nocobase/test/e2e';
-import { detailBlockWithLinkageRule } from './templatesOfBug';
+import { detailBlockWithLinkageRule, detailsBlockWithLinkageRule } from './templatesOfBug';
 
 test.describe('multi data details block schema settings', () => {
   test('supported options', async ({ page, mockPage, mockRecord }) => {
@@ -51,6 +51,13 @@ test.describe('multi data details block schema settings', () => {
     await page.reload();
     await expect(page.getByLabel('block-item-CollectionField-users-details-users.email-Email')).toBeVisible();
   });
+  test('multi detail block support linkage rule', async ({ page, mockPage }) => {
+    const nocoPage = await mockPage(detailsBlockWithLinkageRule).waitForInit();
+    await nocoPage.goto();
+    await expect(page.getByLabel('block-item-CollectionField-roles-details-roles.title')).not.toBeVisible();
+    await page.getByRole('button', { name: 'right' }).click();
+    await expect(page.getByLabel('block-item-CollectionField-roles-details-roles.title')).toBeVisible();
+  });
 });
 
 test.describe('actions schema settings', () => {
@@ -61,6 +68,7 @@ test.describe('actions schema settings', () => {
     // 创建 Edit & Delete 两个按钮
     await page.getByLabel('schema-initializer-ActionBar-detailsWithPaging:configureActions-general').hover();
     await page.getByRole('menuitem', { name: 'Edit' }).click();
+    await page.getByLabel('schema-initializer-ActionBar-detailsWithPaging:configureActions-general').hover();
     await page.getByRole('menuitem', { name: 'Delete' }).click();
     await page.mouse.move(0, 300);
 

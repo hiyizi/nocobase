@@ -12,6 +12,7 @@ import { useFieldSchema } from '@formily/react';
 import { Col, Collapse, Input, Row, Tree } from 'antd';
 import cls from 'classnames';
 import React, { ChangeEvent, MouseEvent, useMemo, useState } from 'react';
+import { withDynamicSchemaProps } from '../../../hoc/withDynamicSchemaProps';
 import { SortableItem } from '../../common';
 import { useCompile, useDesigner, useProps } from '../../hooks';
 import { useToken } from '../__builtins__';
@@ -19,7 +20,6 @@ import { EllipsisWithTooltip } from '../input';
 import { getLabelFormatValue, useLabelUiSchema } from '../record-picker';
 import { AssociationFilter } from './AssociationFilter';
 import useStyles from './AssociationFilter.Item.style';
-import { withDynamicSchemaProps } from '../../../application/hoc/withDynamicSchemaProps';
 
 const { Panel } = Collapse;
 
@@ -48,7 +48,7 @@ export const AssociationFilterItem = withDynamicSchemaProps(
 
     const defaultActiveKeyCollapse = useMemo<React.Key[]>(
       () => (defaultCollapse && collectionField?.name ? [collectionField.name] : []),
-      [],
+      [collectionField.name, defaultCollapse],
     );
     const valueKey = _valueKey || collectionField?.targetKey || 'id';
     const labelKey = _labelKey || fieldSchema['x-component-props']?.fieldNames?.label || valueKey;

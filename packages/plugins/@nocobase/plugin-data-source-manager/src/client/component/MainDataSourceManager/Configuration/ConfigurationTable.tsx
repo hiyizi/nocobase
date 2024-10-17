@@ -17,6 +17,7 @@ import {
   useAPIClient,
   useCurrentAppInfo,
   useRecord,
+  useApp,
   SchemaComponent,
   SchemaComponentContext,
   useCompile,
@@ -25,10 +26,11 @@ import {
   DataSourceContext_deprecated,
   AddSubFieldAction,
   EditSubFieldAction,
-  CollectionCategroriesContext,
+  CollectionCategoriesContext,
   FieldSummary,
   TemplateSummary,
   useRequest,
+  useCollectionRecordData,
 } from '@nocobase/client';
 import { CollectionFields } from './CollectionFields';
 import { collectionSchema } from './schemas/collections';
@@ -101,16 +103,17 @@ const useNewId = (prefix) => {
 
 export const ConfigurationTable = () => {
   const { t } = useTranslation();
-  const { interfaces, getCollections } = useCollectionManager_deprecated();
+  const { interfaces, getCollections, getCollection } = useCollectionManager_deprecated();
   const {
     data: { database },
   } = useCurrentAppInfo();
 
-  const data = useContext(CollectionCategroriesContext);
+  const data = useContext(CollectionCategoriesContext);
   const api = useAPIClient();
   const resource = api.resource('dbViews');
   const compile = useCompile();
   const form = useForm();
+  const app = useApp();
 
   /**
    *
@@ -163,16 +166,30 @@ export const ConfigurationTable = () => {
   };
 
   const loadFilterTargetKeys = async (field) => {
-    const { fields } = field.form.values;
+    const { name } = field.form.values;
+    const { fields } = getCollection(name);
     return Promise.resolve({
       data: fields,
     }).then(({ data }) => {
-      return data?.map((item: any) => {
-        return {
-          label: compile(item.uiSchema?.title) || item.name,
-          value: item.name,
-        };
-      });
+      return data
+        .filter((field) => {
+          if (!field.interface) {
+            return false;
+          }
+          const interfaceOptions = app.dataSourceManager.collectionFieldInterfaceManager.getFieldInterface(
+            field.interface,
+          );
+          if (interfaceOptions.titleUsable) {
+            return true;
+          }
+          return false;
+        })
+        ?.map((item: any) => {
+          return {
+            label: compile(item.uiSchema?.title) || item.name,
+            value: item.name,
+          };
+        });
     });
   };
 

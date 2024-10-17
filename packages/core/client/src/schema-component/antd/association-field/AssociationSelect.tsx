@@ -13,6 +13,7 @@ import { RecursionField, connect, mapProps, observer, useField, useFieldSchema, 
 import { uid } from '@formily/shared';
 import { Space, message } from 'antd';
 import { isFunction } from 'mathjs';
+import { last } from 'lodash';
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClearCollectionFieldContext, RecordProvider, useAPIClient, useCollectionRecordData } from '../../../';
@@ -41,7 +42,7 @@ export const filterAnalyses = (filters): any[] => {
     if (!operator) {
       return true;
     }
-    const regex = /\{\{\$(?:[a-zA-Z_]\w*)\.([a-zA-Z_]\w*)(?:\.id)?\}\}/;
+    const regex = /\{\{\$[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*\.(\w+)\.id\}\}/;
     const fieldName = jsonlogic?.value?.match?.(regex)?.[1];
     if (fieldName) {
       results.push(fieldName);
@@ -55,7 +56,7 @@ const InternalAssociationSelect = observer(
     const { objectValue = true, addMode: propsAddMode, ...rest } = props;
     const field: any = useField();
     const fieldSchema = useFieldSchema();
-    const service = useServiceOptions(props);
+    const service = useServiceOptions(fieldSchema?.['x-component-props'] || props);
     const { options: collectionField } = useAssociationFieldContext();
     const initValue = isVariable(props.value) ? undefined : props.value;
     const value = Array.isArray(initValue) ? initValue.filter(Boolean) : initValue;
@@ -79,9 +80,14 @@ const InternalAssociationSelect = observer(
         //支持深层次子表单
         onFieldInputValueChange('*', (fieldPath: any) => {
           const linkageFields = filterAnalyses(field.componentProps?.service?.params?.filter) || [];
-          if (linkageFields.includes(fieldPath?.props?.name) && field.value) {
-            field.setValue(field.initialValue);
-            setInnerValue(field.initialValue);
+          if (
+            linkageFields.includes(fieldPath?.props?.name) &&
+            field.value &&
+            last(fieldPath?.indexes) === last(field?.indexes) &&
+            fieldPath?.props?.name !== field.props.name
+          ) {
+            field.setValue(undefined);
+            setInnerValue(undefined);
           }
         });
       });
@@ -127,7 +133,7 @@ const InternalAssociationSelect = observer(
     };
     return (
       <div key={fieldSchema.name}>
-        <Space.Compact style={{ display: 'flex', lineHeight: '32px' }}>
+        <Space.Compact style={{ display: 'flex' }}>
           <RemoteSelect
             style={{ width: '100%' }}
             {...rest}

@@ -11,20 +11,22 @@ import { css, cx } from '@emotion/css';
 import { IFormItemProps, FormItem as Item } from '@formily/antd-v5';
 import { Field } from '@formily/core';
 import { observer, useField, useFieldSchema } from '@formily/react';
-import React, { FC, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ACLCollectionFieldProvider } from '../../../acl/ACLProvider';
 import { useApp } from '../../../application';
 import { useFormActiveFields } from '../../../block-provider/hooks/useFormActiveFields';
 import { Collection_deprecated } from '../../../collection-manager';
 import { CollectionFieldProvider } from '../../../data-source/collection-field/CollectionFieldProvider';
+import { withDynamicSchemaProps } from '../../../hoc/withDynamicSchemaProps';
+import { useDataFormItemProps } from '../../../modules/blocks/data-blocks/form/hooks/useDataFormItemProps';
 import { GeneralSchemaDesigner } from '../../../schema-settings';
-import { useVariables } from '../../../variables';
-import useContextVariable from '../../../variables/hooks/useContextVariable';
+import { useContextVariable, useVariables } from '../../../variables';
 import { BlockItem } from '../block-item';
 import { HTMLEncode } from '../input/shared';
 import { FilterFormDesigner } from './FormItem.FilterFormDesigner';
 import { useEnsureOperatorsValid } from './SchemaSettingOptions';
 import useLazyLoadDisplayAssociationFieldsOfForm from './hooks/useLazyLoadDisplayAssociationFieldsOfForm';
+import { useLinkageRulesForSubTableOrSubForm } from './hooks/useLinkageRulesForSubTableOrSubForm';
 import useParseDefaultValue from './hooks/useParseDefaultValue';
 
 Item.displayName = 'FormilyFormItem';
@@ -32,6 +34,9 @@ Item.displayName = 'FormilyFormItem';
 const formItemWrapCss = css`
   & .ant-space {
     flex-wrap: wrap;
+  }
+  .ant-description-textarea img {
+    max-width: 100%;
   }
 `;
 
@@ -41,22 +46,22 @@ const formItemLabelCss = css`
   }
 `;
 
-export const FormItem: any = observer(
-  (props: IFormItemProps) => {
+export const FormItem: any = withDynamicSchemaProps(
+  observer((props: IFormItemProps) => {
     useEnsureOperatorsValid();
     const field = useField<Field>();
     const schema = useFieldSchema();
-    const contextVariable = useContextVariable();
-    const variables = useVariables();
     const { addActiveFieldName } = useFormActiveFields() || {};
-
+    const { wrapperStyle } = useDataFormItemProps();
+    const variables = useVariables();
+    const contextVariable = useContextVariable();
     useEffect(() => {
       variables?.registerVariable(contextVariable);
-    }, [contextVariable]);
-
+    }, [contextVariable, variables]);
     // 需要放在注冊完变量之后
     useParseDefaultValue();
     useLazyLoadDisplayAssociationFieldsOfForm();
+    useLinkageRulesForSubTableOrSubForm();
 
     useEffect(() => {
       addActiveFieldName?.(schema.name as string);
@@ -64,15 +69,17 @@ export const FormItem: any = observer(
 
     const showTitle = schema['x-decorator-props']?.showTitle ?? true;
     const extra = useMemo(() => {
-      return typeof field.description === 'string' ? (
-        <div
-          dangerouslySetInnerHTML={{
-            __html: HTMLEncode(field.description).split('\n').join('<br/>'),
-          }}
-        />
-      ) : (
-        field.description
-      );
+      if (field.description && field.description !== '') {
+        return typeof field.description === 'string' ? (
+          <div
+            dangerouslySetInnerHTML={{
+              __html: HTMLEncode(field.description).split('\n').join('<br/>'),
+            }}
+          />
+        ) : (
+          field.description
+        );
+      }
     }, [field.description]);
     const className = useMemo(() => {
       return cx(formItemWrapCss, {
@@ -84,12 +91,12 @@ export const FormItem: any = observer(
       <CollectionFieldProvider allowNull={true}>
         <BlockItem className={'nb-form-item'}>
           <ACLCollectionFieldProvider>
-            <Item className={className} {...props} extra={extra} />
+            <Item className={className} {...props} extra={extra} wrapperStyle={wrapperStyle} />
           </ACLCollectionFieldProvider>
         </BlockItem>
       </CollectionFieldProvider>
     );
-  },
+  }),
   { displayName: 'FormItem' },
 );
 

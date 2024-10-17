@@ -12,12 +12,7 @@ import { Tag, TreeSelect } from 'antd';
 import type { DefaultOptionType, TreeSelectProps } from 'rc-tree-select/es/TreeSelect';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  CollectionFieldOptions_deprecated,
-  parseCollectionName,
-  useCollectionManager_deprecated,
-  useCompile,
-} from '../../..';
+import { CollectionFieldOptions_deprecated, parseCollectionName, useApp, useCompile } from '../../..';
 
 export type AppendsTreeSelectProps = {
   value: string[] | string;
@@ -66,8 +61,7 @@ function trueFilter(field) {
 }
 
 function getCollectionFieldOptions(this: CallScope, collection, parentNode?): TreeOptionType[] {
-  const [dataSourceName, collectionName] = parseCollectionName(collection);
-  const fields = this.getCollectionFields(collectionName, dataSourceName).filter(isAssociation);
+  const fields = this.getCollectionFields(collection).filter(isAssociation);
   const boundLoadChildren = loadChildren.bind(this);
   return fields.filter(this.filter).map((field) => {
     const key = parentNode ? `${parentNode.value ? `${parentNode.value}.` : ''}${field.name}` : field.name;
@@ -104,7 +98,13 @@ export const AppendsTreeSelect: React.FC<TreeSelectProps & AppendsTreeSelectProp
   const [optionsMap, setOptionsMap] = useState({});
   const collectionString = useCollection({ collection });
   const [dataSourceName, collectionName] = parseCollectionName(collectionString);
-  const { getCollectionFields } = useCollectionManager_deprecated(dataSourceName);
+  const app = useApp();
+  const { collectionManager } = app.dataSourceManager.getDataSource(dataSourceName);
+  const getCollectionFields = (name, predicate) => {
+    const instance = collectionManager.getCollection(name);
+    // NOTE: condition for compatibility with hidden collections like "attachments"
+    return instance ? instance.getAllFields(predicate) : [];
+  };
   const treeData = Object.values(optionsMap);
   const value: string | DefaultOptionType[] = useMemo(() => {
     if (props.multiple) {
@@ -142,7 +142,7 @@ export const AppendsTreeSelect: React.FC<TreeSelectProps & AppendsTreeSelectProp
     const tData =
       propsLoadData === null
         ? []
-        : getCollectionFieldOptions.call({ compile, getCollectionFields, filter }, collectionString, parentNode);
+        : getCollectionFieldOptions.call({ compile, getCollectionFields, filter }, collectionName, parentNode);
 
     const map = tData.reduce((result, item) => Object.assign(result, { [item.value]: item }), {});
     if (parentNode) {

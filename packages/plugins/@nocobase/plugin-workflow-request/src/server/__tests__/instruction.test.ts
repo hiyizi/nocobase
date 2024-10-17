@@ -8,6 +8,7 @@
  */
 
 import { Server } from 'http';
+import type { AddressInfo } from 'net';
 import jwt from 'jsonwebtoken';
 import Koa from 'koa';
 import bodyParser from 'koa-bodyparser';
@@ -32,11 +33,20 @@ class MockAPI {
   get URL_400() {
     return `http://${HOST}:${this.port}/api/400`;
   }
+  get URL_400_MESSAGE() {
+    return `http://${HOST}:${this.port}/api/400_message`;
+  }
+  get URL_400_OBJECT() {
+    return `http://${HOST}:${this.port}/api/400_object`;
+  }
   get URL_404() {
     return `http://${HOST}:${this.port}/api/404`;
   }
   get URL_TIMEOUT() {
     return `http://${HOST}:${this.port}/api/timeout`;
+  }
+  get URL_END() {
+    return `http://${HOST}:${this.port}/api/end`;
   }
   constructor() {
     this.app = new Koa();
@@ -45,6 +55,18 @@ class MockAPI {
     this.app.use(async (ctx, next) => {
       if (ctx.path === '/api/400') {
         return ctx.throw(400);
+      }
+      if (ctx.path === '/api/400_message') {
+        return ctx.throw(400, 'bad request message');
+      }
+      if (ctx.path === '/api/400_object') {
+        ctx.body = { a: 1 };
+        ctx.status = 400;
+        return;
+      }
+      if (ctx.path === '/api/end') {
+        ctx.res.socket.end();
+        return;
       }
       if (ctx.path === '/api/timeout') {
         await sleep(2000);
@@ -121,7 +143,48 @@ describe('workflow > instructions > request', () => {
     await app.destroy();
   });
 
+  describe('params processing', () => {
+    it('trim should not crash', async () => {
+      await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_DATA,
+          method: 'GET',
+          params: [{ name: 'id', value: '{{$context.data.id}}' }],
+        } as RequestConfig,
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
+    });
+  });
+
   describe('request static app routes', () => {
+    it('get data (legacy)', async () => {
+      await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_DATA,
+          method: 'GET',
+          onlyData: true,
+        } as RequestConfig,
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
+      const [job] = await execution.getJobs();
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result).toMatchObject({ meta: {}, data: {} });
+    });
+
     it('get data', async () => {
       await workflow.createNode({
         type: 'request',
@@ -136,10 +199,12 @@ describe('workflow > instructions > request', () => {
       await sleep(500);
 
       const [execution] = await workflow.getExecutions();
-      expect(execution.status).toEqual(EXECUTION_STATUS.RESOLVED);
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result).toEqual({ meta: {}, data: {} });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result).toMatchObject({
+        data: { meta: {}, data: {} },
+      });
     });
 
     it('timeout', async () => {
@@ -158,7 +223,7 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.FAILED);
+      expect(job.status).toBe(JOB_STATUS.FAILED);
 
       expect(job.result).toMatchObject({
         code: 'ECONNABORTED',
@@ -188,7 +253,7 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
       expect(job.result).toMatchObject({
         code: 'ECONNABORTED',
         name: 'Error',
@@ -197,13 +262,12 @@ describe('workflow > instructions > request', () => {
       });
     });
 
-    it('response 400', async () => {
+    it('response 400 without body', async () => {
       await workflow.createNode({
         type: 'request',
         config: {
           url: api.URL_400,
           method: 'GET',
-          ignoreFail: false,
         } as RequestConfig,
       });
 
@@ -213,8 +277,72 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.FAILED);
+      expect(job.status).toBe(JOB_STATUS.FAILED);
       expect(job.result.status).toBe(400);
+    });
+
+    it('response 400 with text message', async () => {
+      await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_400_MESSAGE,
+          method: 'GET',
+        } as RequestConfig,
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      const [job] = await execution.getJobs();
+      expect(job.status).toBe(JOB_STATUS.FAILED);
+      expect(job.result.status).toBe(400);
+      expect(job.result.data).toBe('bad request message');
+    });
+
+    it('response 400 with object', async () => {
+      await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_400_OBJECT,
+          method: 'GET',
+        } as RequestConfig,
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      const [job] = await execution.getJobs();
+      expect(job.status).toBe(JOB_STATUS.FAILED);
+      expect(job.result.status).toBe(400);
+      expect(job.result.data).toEqual({ a: 1 });
+    });
+
+    it('response just end', async () => {
+      await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_END,
+          method: 'GET',
+        } as RequestConfig,
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      const [job] = await execution.getJobs();
+      expect(job.status).toBe(JOB_STATUS.FAILED);
+      expect(job.result).toMatchObject({
+        code: 'ECONNRESET',
+        name: 'Error',
+        status: null,
+        message: 'socket hang up',
+      });
     });
 
     it('response 400 ignoreFail', async () => {
@@ -234,7 +362,7 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
       expect(job.result.status).toBe(400);
     });
 
@@ -254,8 +382,8 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result.data).toEqual({ title: 't1' });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data.data).toEqual({ title: 't1' });
     });
 
     // TODO(bug): should not use ejs
@@ -278,8 +406,8 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await workflow.getExecutions();
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result.data).toEqual({ title });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data.data).toEqual({ title });
     });
 
     it.skip('request inside loop', async () => {
@@ -305,7 +433,7 @@ describe('workflow > instructions > request', () => {
       await sleep(500);
 
       const [execution] = await workflow.getExecutions();
-      expect(execution.status).toEqual(EXECUTION_STATUS.RESOLVED);
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const jobs = await execution.getJobs({ order: [['id', 'ASC']] });
       expect(jobs.length).toBe(3);
       expect(jobs.map((item) => item.status)).toEqual(Array(3).fill(JOB_STATUS.RESOLVED));
@@ -329,10 +457,10 @@ describe('workflow > instructions > request', () => {
       await sleep(500);
 
       const [execution] = await workflow.getExecutions();
-      expect(execution.status).toEqual(EXECUTION_STATUS.RESOLVED);
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result.data).toEqual({ a: 't1' });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data.data).toEqual({ a: 't1' });
     });
 
     it('contentType as "application/x-www-form-urlencoded"', async () => {
@@ -354,10 +482,34 @@ describe('workflow > instructions > request', () => {
       await sleep(500);
 
       const [execution] = await workflow.getExecutions();
-      expect(execution.status).toEqual(EXECUTION_STATUS.RESOLVED);
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result.data).toEqual({ a: ['t1', '&=1'] });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data.data).toEqual({ a: ['t1', '&=1'] });
+    });
+  });
+
+  describe('invalid characters', () => {
+    it('\\n in header value should be trimed, and should not cause error', async () => {
+      const n1 = await workflow.createNode({
+        type: 'request',
+        config: {
+          url: api.URL_DATA,
+          method: 'POST',
+          data: { a: '{{$context.data.title}}' },
+          headers: [{ name: 'Authorization', value: 'abc\n' }],
+        },
+      });
+
+      await PostRepo.create({ values: { title: 't1' } });
+
+      await sleep(500);
+
+      const [execution] = await workflow.getExecutions();
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
+      const [job] = await execution.getJobs();
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data.data).toEqual({ a: 't1' });
     });
   });
 
@@ -375,14 +527,14 @@ describe('workflow > instructions > request', () => {
         },
       );
 
-      const server = app.listen(12346, () => {});
+      const server = app.listen(0, () => {});
 
       await sleep(1000);
 
       const n1 = await workflow.createNode({
         type: 'request',
         config: {
-          url: `http://localhost:12346/api/categories`,
+          url: `http://localhost:${(server.address() as AddressInfo).port}/api/categories`,
           method: 'POST',
           headers: [{ name: 'Authorization', value: `Bearer ${token}` }],
         } as RequestConfig,
@@ -398,7 +550,7 @@ describe('workflow > instructions > request', () => {
       expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const [job] = await execution.getJobs();
       expect(job.status).toBe(JOB_STATUS.RESOLVED);
-      expect(job.result.data).toMatchObject({});
+      expect(job.result.data.data).toMatchObject({});
 
       server.close();
     });
@@ -428,11 +580,11 @@ describe('workflow > instructions > request', () => {
 
       const [execution] = await syncFlow.getExecutions();
       expect(processor.execution.id).toEqual(execution.id);
-      expect(processor.execution.status).toEqual(execution.status);
-      expect(execution.status).toEqual(EXECUTION_STATUS.RESOLVED);
+      expect(processor.execution.status).toBe(execution.status);
+      expect(execution.status).toBe(EXECUTION_STATUS.RESOLVED);
       const [job] = await execution.getJobs();
-      expect(job.status).toEqual(JOB_STATUS.RESOLVED);
-      expect(job.result).toEqual({ meta: {}, data: {} });
+      expect(job.status).toBe(JOB_STATUS.RESOLVED);
+      expect(job.result.data).toEqual({ meta: {}, data: {} });
     });
 
     it('ignoreFail', async () => {

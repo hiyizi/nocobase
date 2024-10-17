@@ -104,6 +104,7 @@ export class PluginACLServer extends Plugin {
         'roles.users:*',
         'dataSources.roles:*',
         'dataSources:list',
+        'dataSources.rolesResourcesScopes:*',
         'roles.dataSourcesCollections:*',
         'roles.dataSourceResources:*',
         'dataSourcesRolesResourcesScopes:*',
@@ -580,13 +581,13 @@ export class PluginACLServer extends Plugin {
     );
 
     this.db.on('afterUpdateCollection', async (collection) => {
-      if (collection.options.loadedFromCollectionManager) {
+      if (collection.options.loadedFromCollectionManager || collection.options.asStrategyResource) {
         this.app.acl.appendStrategyResource(collection.name);
       }
     });
 
     this.db.on('afterDefineCollection', async (collection) => {
-      if (collection.options.loadedFromCollectionManager) {
+      if (collection.options.loadedFromCollectionManager || collection.options.asStrategyResource) {
         this.app.acl.appendStrategyResource(collection.name);
       }
     });

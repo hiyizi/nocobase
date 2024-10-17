@@ -7,21 +7,23 @@
  * For more information, please refer to: https://www.nocobase.com/agreement.
  */
 
-import {
-  screen,
-  checkSettings,
-  renderSingleSettings,
-  waitFor,
-  userEvent,
-  renderReadPrettySingleSettings,
-  renderSettings,
-  renderReadPrettySettings,
-  checkFieldTitle,
-} from '@nocobase/test/client';
-import { FilterFormBlockProvider, FormBlockProvider, FormItem, fieldSettingsFormItem } from '@nocobase/client';
 import { useFieldSchema } from '@formily/react';
 import { observer } from '@formily/reactive-react';
+import {
+  checkFieldTitle,
+  checkSettings,
+  renderReadPrettySettings,
+  renderSettings,
+  renderSingleSettings,
+  screen,
+  userEvent,
+  waitFor,
+} from '@nocobase/test/client';
 import React from 'react';
+import { fieldSettingsFormItem } from '..';
+import { FilterFormBlockProvider } from '../../../../../block-provider/FilterFormBlockProvider';
+import { FormBlockProvider } from '../../../../../block-provider/FormBlockProvider';
+import { FormItem } from '../../../../../schema-component/antd/form-item/FormItem';
 
 describe('FieldSettingsFormItem', () => {
   function commonFieldOptions(isFilterForm?: boolean) {
@@ -241,6 +243,10 @@ describe('FieldSettingsFormItem', () => {
               type: 'select',
             },
             {
+              title: 'Style',
+              type: 'modal',
+            },
+            {
               title: 'Set validation rules',
               type: 'modal',
             },
@@ -281,6 +287,10 @@ describe('FieldSettingsFormItem', () => {
             {
               title: 'Pattern',
               type: 'select',
+            },
+            {
+              title: 'Style',
+              type: 'modal',
             },
             {
               title: 'Field component',

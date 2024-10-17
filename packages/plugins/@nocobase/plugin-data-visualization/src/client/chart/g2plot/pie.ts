@@ -27,6 +27,7 @@ export class Pie extends G2PlotChart {
         title: 'colorField',
         required: true,
       },
+      'size',
     ];
   }
 
@@ -57,18 +58,19 @@ export class Pie extends G2PlotChart {
       };
     }
     const props = super.getProps({ data, general, advanced, fieldProps });
+    const defaultTooltip = {
+      items: [
+        (data: any) => {
+          const { [general.colorField]: color, [angleField]: angle } = data;
+          const name = color || angleFieldProps?.label || angleField;
+          const transformer = angleFieldProps?.transformer;
+          return { name, value: transformer ? transformer(angle) : angle };
+        },
+      ],
+    };
     return {
       ...props,
-      tooltip: {
-        items: [
-          (data: any) => {
-            const { [general.colorField]: color, [angleField]: angle } = data;
-            const name = color || angleFieldProps?.label || angleField;
-            const transformer = angleFieldProps?.transformer;
-            return { name, value: transformer ? transformer(angle) : angle };
-          },
-        ],
-      },
+      tooltip: advanced.tooltip || defaultTooltip,
     };
   }
 }

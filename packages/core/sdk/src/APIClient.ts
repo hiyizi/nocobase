@@ -9,7 +9,6 @@
 
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosRequestHeaders, AxiosResponse } from 'axios';
 import qs from 'qs';
-import getSubAppName from './getSubAppName';
 
 export interface ActionParams {
   filterByTk?: any;
@@ -32,13 +31,29 @@ export type IResource = {
 export class Auth {
   protected api: APIClient;
 
-  protected KEYS = {
-    locale: 'NOCOBASE_LOCALE',
-    role: 'NOCOBASE_ROLE',
-    token: 'NOCOBASE_TOKEN',
-    authenticator: 'NOCOBASE_AUTH',
-    theme: 'NOCOBASE_THEME',
-  };
+  get storagePrefix() {
+    return this.api.storagePrefix;
+  }
+
+  get KEYS() {
+    const defaults = {
+      locale: this.storagePrefix + 'LOCALE',
+      role: this.storagePrefix + 'ROLE',
+      token: this.storagePrefix + 'TOKEN',
+      authenticator: this.storagePrefix + 'AUTH',
+      theme: this.storagePrefix + 'THEME',
+    };
+
+    if (this.api['app']) {
+      const appName = this.api['app']?.getName?.();
+      if (appName) {
+        defaults['role'] = `${appName.toUpperCase()}_` + defaults['role'];
+        defaults['locale'] = `${appName.toUpperCase()}_` + defaults['locale'];
+      }
+    }
+
+    return defaults;
+  }
 
   protected options = {
     locale: null,
@@ -49,20 +64,7 @@ export class Auth {
 
   constructor(api: APIClient) {
     this.api = api;
-    this.initKeys();
     this.api.axios.interceptors.request.use(this.middleware.bind(this));
-  }
-
-  initKeys() {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    const appName = getSubAppName(this.api['app'] ? this.api['app'].getPublicPath() : '/');
-    if (!appName) {
-      return;
-    }
-    this.KEYS['role'] = `${appName.toUpperCase()}_` + this.KEYS['role'];
-    this.KEYS['locale'] = `${appName.toUpperCase()}_` + this.KEYS['locale'];
   }
 
   get locale() {
@@ -266,6 +268,7 @@ export class MemoryStorage extends Storage {
 interface ExtendedOptions {
   authClass?: any;
   storageClass?: any;
+  storagePrefix?: string;
 }
 
 export type APIClientOptions = AxiosInstance | (AxiosRequestConfig & ExtendedOptions);
@@ -274,6 +277,7 @@ export class APIClient {
   axios: AxiosInstance;
   auth: Auth;
   storage: Storage;
+  storagePrefix = 'NOCOBASE_';
 
   getHeaders() {
     const headers = {};
@@ -296,7 +300,8 @@ export class APIClient {
     if (typeof instance === 'function') {
       this.axios = instance;
     } else {
-      const { authClass, storageClass, ...others } = instance || {};
+      const { authClass, storageClass, storagePrefix = 'NOCOBASE_', ...others } = instance || {};
+      this.storagePrefix = storagePrefix;
       this.axios = axios.create(others);
       this.initStorage(storageClass);
       if (authClass) {
@@ -342,10 +347,14 @@ export class APIClient {
     return this.axios.request<T, R, D>(config);
   }
 
-  resource(name: string, of?: any, headers?: AxiosRequestHeaders): IResource {
+  resource(name: string, of?: any, headers?: AxiosRequestHeaders, cancel?: boolean): IResource {
     const target = {};
     const handler = {
       get: (_: any, actionName: string) => {
+        if (cancel) {
+          return;
+        }
+
         let url = name.split('.').join(`/${encodeURIComponent(of) || '_'}/`);
         url += `:${actionName}`;
         const config: AxiosRequestConfig = { url };

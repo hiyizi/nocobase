@@ -21,6 +21,7 @@ import { useCreateFormBlockDecoratorProps } from '../modules/blocks/data-blocks/
 import { useCreateFormBlockProps } from '../modules/blocks/data-blocks/form/hooks/useCreateFormBlockProps';
 import { useEditFormBlockDecoratorProps } from '../modules/blocks/data-blocks/form/hooks/useEditFormBlockDecoratorProps';
 import { useEditFormBlockProps } from '../modules/blocks/data-blocks/form/hooks/useEditFormBlockProps';
+import { useDataFormItemProps } from '../modules/blocks/data-blocks/form/hooks/useDataFormItemProps';
 import { useGridCardBlockDecoratorProps } from '../modules/blocks/data-blocks/grid-card/hooks/useGridCardBlockDecoratorProps';
 import { useListBlockDecoratorProps } from '../modules/blocks/data-blocks/list/hooks/useListBlockDecoratorProps';
 import { useTableSelectorDecoratorProps } from '../modules/blocks/data-blocks/table-selector/hooks/useTableSelectorDecoratorProps';
@@ -31,6 +32,7 @@ import { CollapseItemSchemaToolbar } from '../modules/blocks/filter-blocks/colla
 import { useCollapseBlockDecoratorProps } from '../modules/blocks/filter-blocks/collapse/hooks/useCollapseBlockDecoratorProps';
 import { useFilterFormBlockDecoratorProps } from '../modules/blocks/filter-blocks/form/hooks/useFilterFormBlockDecoratorProps';
 import { useFilterFormBlockProps } from '../modules/blocks/filter-blocks/form/hooks/useFilterFormBlockProps';
+import { useFormItemProps } from '../modules/blocks/filter-blocks/form/hooks/useFormItemProps';
 import { SchemaComponentOptions } from '../schema-component';
 import { RecordLink, useParamsFromRecord, useSourceIdFromParentRecord, useSourceIdFromRecord } from './BlockProvider';
 import { DetailsBlockProvider, useDetailsBlockProps } from './DetailsBlockProvider';
@@ -83,6 +85,8 @@ export const BlockSchemaComponentProvider: React.FC = (props) => {
         useFilterFormBlockProps,
         useFilterFormBlockDecoratorProps,
         useGridCardBlockDecoratorProps,
+        useFormItemProps,
+        useDataFormItemProps,
       }}
     >
       {props.children}
@@ -142,6 +146,8 @@ export class BlockSchemaComponentPlugin extends Plugin {
       useFilterFormBlockProps,
       useFilterFormBlockDecoratorProps,
       useGridCardBlockDecoratorProps,
+      useFormItemProps,
+      useDataFormItemProps,
     });
   }
 }

@@ -12,6 +12,7 @@ import Trigger from '.';
 import { toJSON } from '../utils';
 import type { WorkflowModel } from '../types';
 import { ICollection, parseCollectionName } from '@nocobase/data-source-manager';
+import { isValidFilter } from '@nocobase/utils';
 
 export interface CollectionChangeTriggerConfig {
   collection: string;
@@ -58,15 +59,17 @@ async function handler(this: CollectionTrigger, workflow: WorkflowModel, data: M
     changed &&
     changed.length &&
     changed
-      .filter(
-        (name) => !['linkTo', 'hasOne', 'hasMany', 'belongsToMany'].includes(collection.getField(name).options.type),
-      )
+      .filter((name) => {
+        const field = collection.getField(name);
+        return field && !['linkTo', 'hasOne', 'hasMany', 'belongsToMany'].includes(field.options.type);
+      })
       .every((name) => !data.changedWithAssociations(getFieldRawName(collection, name)))
   ) {
     return;
   }
-  // NOTE: if no configured condition match, do not trigger
-  if (condition && condition.$and?.length) {
+
+  // NOTE: if no configured condition, or not match, do not trigger
+  if (isValidFilter(condition) && !(mode & MODE_BITMAP.DESTROY)) {
     // TODO: change to map filter format to calculation format
     // const calculation = toCalculation(condition);
     const count = await repository.count({
@@ -111,7 +114,13 @@ async function handler(this: CollectionTrigger, workflow: WorkflowModel, data: M
       },
     );
   } else {
-    this.workflow.trigger(workflow, { data: json, stack: context?.stack });
+    if (transaction) {
+      transaction.afterCommit(() => {
+        this.workflow.trigger(workflow, { data: json, stack: context?.stack });
+      });
+    } else {
+      this.workflow.trigger(workflow, { data: json, stack: context?.stack });
+    }
   }
 }
 

@@ -45,6 +45,7 @@ import { HasOneRepository } from './relation-repository/hasone-repository';
 import { RelationRepository } from './relation-repository/relation-repository';
 import { updateAssociations, updateModelByValues } from './update-associations';
 import { UpdateGuard } from './update-guard';
+import { BelongsToArrayRepository } from './relation-repository/belongs-to-array-repository';
 
 const debug = require('debug')('noco-database');
 
@@ -133,7 +134,7 @@ export interface DestroyOptions extends SequelizeDestroyOptions {
   context?: any;
 }
 
-type FindAndCountOptions = Omit<SequelizeAndCountOptions, 'where' | 'include' | 'order'> & CommonFindOptions;
+export type FindAndCountOptions = Omit<SequelizeAndCountOptions, 'where' | 'include' | 'order'> & CommonFindOptions;
 
 export interface CreateOptions extends SequelizeCreateOptions {
   values?: Values | Values[];
@@ -188,6 +189,7 @@ class RelationRepositoryBuilder<R extends RelationRepository> {
     BelongsToMany: BelongsToManyRepository,
     HasMany: HasManyRepository,
     ArrayField: ArrayFieldRepository,
+    BelongsToArray: BelongsToArrayRepository,
   };
 
   constructor(collection: Collection, associationName: string) {
@@ -195,13 +197,17 @@ class RelationRepositoryBuilder<R extends RelationRepository> {
     this.associationName = associationName;
     this.association = this.collection.model.associations[this.associationName];
 
-    if (!this.association) {
-      const field = collection.getField(associationName);
-      if (field && field instanceof ArrayField) {
-        this.association = {
-          associationType: 'ArrayField',
-        };
-      }
+    if (this.association) {
+      return;
+    }
+    const field = collection.getField(associationName);
+    if (!field) {
+      return;
+    }
+    if (field instanceof ArrayField) {
+      this.association = {
+        associationType: 'ArrayField',
+      };
     }
   }
 
@@ -242,11 +248,8 @@ export class Repository<TModelAttributes extends {} = any, TCreationAttributes e
     this.model = collection.model;
   }
 
-  public static valuesToFilter(values: Values, filterKeys: Array<string>) {
-    const filterAnd = [];
-    const flattedValues = flatten(values);
-
-    const keyWithOutArrayIndex = (key) => {
+  public static valuesToFilter(values: Values = {}, filterKeys: Array<string>) {
+    const removeArrayIndexInKey = (key) => {
       const chunks = key.split('.');
       return chunks
         .filter((chunk) => {
@@ -255,28 +258,35 @@ export class Repository<TModelAttributes extends {} = any, TCreationAttributes e
         .join('.');
     };
 
-    for (const filterKey of filterKeys) {
-      let filterValue;
+    const filterAnd = [];
+    const flattedValues = flatten(values);
+    const flattedValuesObject = {};
 
-      for (const flattedKey of Object.keys(flattedValues)) {
-        const flattedKeyWithoutIndex = keyWithOutArrayIndex(flattedKey);
-
-        if (flattedKeyWithoutIndex === filterKey) {
-          if (filterValue) {
-            if (Array.isArray(filterValue)) {
-              filterValue.push(flattedValues[flattedKey]);
-            } else {
-              filterValue = [filterValue, flattedValues[flattedKey]];
-            }
-          } else {
-            filterValue = flattedValues[flattedKey];
-          }
+    for (const key in flattedValues) {
+      const keyWithoutArrayIndex = removeArrayIndexInKey(key);
+      if (flattedValuesObject[keyWithoutArrayIndex]) {
+        if (!Array.isArray(flattedValuesObject[keyWithoutArrayIndex])) {
+          flattedValuesObject[keyWithoutArrayIndex] = [flattedValuesObject[keyWithoutArrayIndex]];
         }
+
+        flattedValuesObject[keyWithoutArrayIndex].push(flattedValues[key]);
+      } else {
+        flattedValuesObject[keyWithoutArrayIndex] = [flattedValues[key]];
       }
+    }
+
+    for (const filterKey of filterKeys) {
+      const filterValue = flattedValuesObject[filterKey]
+        ? flattedValuesObject[filterKey]
+        : lodash.get(values, filterKey);
 
       if (filterValue) {
         filterAnd.push({
           [filterKey]: filterValue,
+        });
+      } else {
+        filterAnd.push({
+          [filterKey]: null,
         });
       }
     }
@@ -384,6 +394,42 @@ export class Repository<TModelAttributes extends {} = any, TCreationAttributes e
     }
 
     return await this.model.aggregate(field, method, queryOptions);
+  }
+
+  async chunk(
+    options: FindOptions & { chunkSize: number; callback: (rows: Model[], options: FindOptions) => Promise<void> },
+  ) {
+    const { chunkSize, callback, limit: overallLimit } = options;
+    const transaction = await this.getTransaction(options);
+
+    let offset = 0;
+    let totalProcessed = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      // Calculate the limit for the current chunk
+      const currentLimit = overallLimit !== undefined ? Math.min(chunkSize, overallLimit - totalProcessed) : chunkSize;
+
+      const rows = await this.find({
+        ...options,
+        limit: currentLimit,
+        offset,
+        transaction,
+      });
+
+      if (rows.length === 0) {
+        break;
+      }
+
+      await callback(rows, options);
+
+      offset += currentLimit;
+      totalProcessed += rows.length;
+
+      if (overallLimit !== undefined && totalProcessed >= overallLimit) {
+        break;
+      }
+    }
   }
 
   /**
